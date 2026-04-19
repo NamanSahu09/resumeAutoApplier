@@ -75,20 +75,23 @@ export class AutomationService {
           .map(([p, u]) => `- ${p}: ${u}`).join('\n')}`
       : '';
 
-    const prompt = `Act as a high-precision job discovery engine. Search for active job postings with these criteria:
-    Role: ${filter.role}
-    Experience Level: ${filter.experience}
+    const prompt = `Act as a high-precision job discovery engine for ${filter.role} roles with ${filter.experience} experience.
     Target Platforms: ${filter.platforms.join(', ')}
     ${urlContext}
     
     CRITICAL INSTRUCTIONS:
-    1. Search for LIVE, active job listings from the last 7 days.
-    2. For each result, find the DIRECT application URL or the specific job ID page (e.g., indeed.com/viewjob?jk=XXX, linkedin.com/jobs/view/XXX).
-    3. DO NOT return search result pages or expired links.
-    4. Ensure the titles and company names are captured exactly as they appear.
-    5. If Specific Search URLs are provided above, navigate to them FIRST to find listings.
+    1. Find EXACTLY 5 LIVE, active job listings posted TODAY (last 24-48 hours).
+    2. Use Google Search to find jobs on ${filter.platforms.join(', ')}.
+    3. For EACH result, you MUST provide a URL that is a DIRECT JOB VIEW page. 
+       - LinkedIn: MUST be /jobs/view/ID
+       - Indeed: MUST be /viewjob?jk=ID
+       - Naukri: MUST be /job-listings-ID
+       - Apna: MUST be /job-ID
+    4. AVOID generic search pages (e.g., indeed.com/jobs?q=...).
+    5. VERIFY RECENTNESS: Only return jobs where you are 100% sure they are currently active.
+    6. If a Specific Search URL was provided, extract the MOST RECENT jobs from that specific feed first.
     
-    Return a STRICT JSON array of exactly 5 objects:
+    Return a STRICT JSON array of objects:
     { "id": "uuid", "title": "Job Title", "company": "Company Name", "platform": "Platform Name", "url": "https://..." }`;
 
     try {

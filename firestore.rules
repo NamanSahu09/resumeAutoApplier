@@ -18,15 +18,12 @@ service cloud.firestore {
     // --- Job Validation ---
     function isValidJob(data) {
       return data.keys().hasAll(['title', 'company', 'platform', 'url', 'status', 'timestamp', 'userId']) 
-        && data.keys().size() <= 11
         && data.title is string && data.title.size() <= 500
         && data.company is string && data.company.size() <= 500
         && data.platform is string && data.platform.size() <= 100
         && data.url is string && data.url.size() <= 2000
         && data.status in ['pending', 'customizing', 'applied', 'failed']
-        && data.timestamp is string
-        && isOwner(data.userId)
-        && (!('coverLetter' in data) || (data.coverLetter is string && data.coverLetter.size() <= 10000));
+        && isOwner(data.userId);
     }
 
     // --- Status Validation ---

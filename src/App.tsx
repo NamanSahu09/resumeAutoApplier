@@ -235,40 +235,52 @@ export default function App() {
     }
   };
 
-  const discoverJobs = async () => {
+  const discoverJobs = async (isRecurring = false) => {
     if (!automationServiceRef.current || !user) {
-      addLog("Critical: Automation Service not initialized. Check API Key.");
+      if (!isRecurring) addLog("Critical: Automation Service not initialized. Check API Key.");
       return;
     }
 
     setIsProcessing(true);
-    addLog("Initializing Job Discovery Agent...");
+    if (!isRecurring) addLog("Initializing Job Discovery Agent...");
+    else addLog("Sentinel Pulse: Scanning for new high-probability targets...");
     
     try {
       const discovered = await automationServiceRef.current.discoverJobs(filter);
       
       if (discovered.length > 0) {
+        let newCount = 0;
         for (const job of discovered) {
-          const docRef = await addDoc(collection(db, 'jobs'), {
-            ...job,
-            userId: user.uid,
-            timestamp: new Date().toISOString()
-          });
+          // Check if link already exists to avoid duplicates
+          const qExist = query(collection(db, 'jobs'), where('url', '==', job.url), where('userId', '==', user.uid));
+          const existSnap = await getDocs(qExist);
+          
+          if (existSnap.empty) {
+            const docRef = await addDoc(collection(db, 'jobs'), {
+              ...job,
+              userId: user.uid,
+              timestamp: new Date().toISOString()
+            });
+            newCount++;
 
-          if (filter.autoTailor) {
-             handleTailorJob(docRef.id);
+            if (filter.autoTailor) {
+              handleTailorJob(docRef.id);
+            }
           }
         }
-        addLog(`Successfully found and stored ${discovered.length} relevant roles.`);
-        addNotification(`Discovered ${discovered.length} new opportunities matching your profile.`, 'success');
+        if (newCount > 0) {
+          addLog(`Nexus Sync: ${newCount} new roles verified and pushed to vault.`);
+          addNotification(`${newCount} new opportunities detected in the current stream.`, 'success');
+        } else {
+          if (!isRecurring) addLog("Discovery complete: 0 new unique targets found.");
+        }
       } else {
-        addLog("No new jobs found matching the criteria.");
+        if (!isRecurring) addLog("No new jobs found matching the criteria.");
       }
     } catch (error: any) {
       const errorMsg = error.message || "";
       if (errorMsg.includes('429') || errorMsg.includes('RESOURCE_EXHAUSTED')) {
-        addLog(`[QUOTA EXCEEDED] Discovery Agent throttled. Retrying in next cycle.`);
-        addNotification("AI Discovery Rate Limit. Waiting...", "warning");
+        addLog(`[QUOTA EXCEEDED] Catalyst limit reached. Sentinel idling.`);
       } else {
         addLog(`Discovery error: ${errorMsg.slice(0, 50)}...`);
       }
@@ -276,6 +288,18 @@ export default function App() {
       setIsProcessing(false);
     }
   };
+
+  // Realtime Discovery Loop
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (status.isRunning && user) {
+      // Run every 15 minutes for "realtime" feel
+      interval = setInterval(() => {
+        discoverJobs(true);
+      }, 15 * 60 * 1000);
+    }
+    return () => clearInterval(interval);
+  }, [status.isRunning, user, filter]);
 
   const handleTailorJob = async (id: string) => {
     const job = jobs.find(j => j.id === id);
@@ -380,6 +404,20 @@ export default function App() {
     const newCredentials = { ...(status.credentials || {}), [platform]: value };
     await setDoc(statusRef, { credentials: newCredentials }, { merge: true });
     addNotification(`${platform.charAt(0).toUpperCase() + platform.slice(1)} configuration updated.`, 'success');
+  };
+
+  const updatePlatformUrl = async (platformCode: string, url: string) => {
+    if (!user) return;
+    const statusRef = doc(db, 'status', user.uid);
+    const newUrls = { ...(status.platformUrls || {}), [platformCode]: url };
+    await setDoc(statusRef, { platformUrls: newUrls }, { merge: true });
+    
+    // Also sync to filter
+    const newFilter = { ...filter, platformUrls: newUrls };
+    setFilter(newFilter);
+    await setDoc(statusRef, { filter: newFilter }, { merge: true });
+    
+    addNotification(`${platformCode} search URL updated.`, 'success');
   };
 
   const triggerInterventionSim = async () => {
@@ -584,26 +622,36 @@ export default function App() {
                 <AnimatePresence mode='popLayout'>
                   {jobs.map((job) => (
                     <motion.div 
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
                       key={job.id}
                       onClick={() => setSelectedJob(job)}
-                      className={`group p-4 flex items-center justify-between transition-colors cursor-pointer z-10 ${selectedJob?.id === job.id ? 'bg-[#818cf8]/10 border-l-4 border-l-[#818cf8]' : 'hover:bg-white/5 border-l-4 border-l-transparent'}`}
+                      className={`group p-4 flex items-center justify-between transition-all cursor-pointer z-10 relative overflow-hidden ${
+                        selectedJob?.id === job.id 
+                          ? 'bg-[#818cf8]/10 border-l-4 border-l-[#818cf8]' 
+                          : 'hover:bg-white/5 border-l-4 border-l-transparent'
+                      }`}
                     >
                       <div className="flex flex-col text-left min-w-0 flex-1 pr-4 overflow-hidden">
                         <div className="flex items-center gap-2 mb-1">
-                           <span className="flex-shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-[#818cf8] uppercase tracking-tight">
+                           <span className="flex-shrink-0 text-[8px] font-bold px-1 py-0.5 rounded bg-[#818cf8]/10 border border-[#818cf8]/20 text-[#818cf8] uppercase tracking-tighter">
                             {job.platform}
                            </span>
-                           <h3 className="text-sm font-semibold text-white/95 truncate" title={job.title}>
+                           <h3 className="text-sm font-bold text-white/95 truncate tracking-tight group-hover:text-[#818cf8] transition-colors" title={job.title}>
                             {job.title}
                            </h3>
                         </div>
-                        <span className="text-xs text-[#94a3b8] truncate pl-0.5">{job.company}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-[#94a3b8] truncate font-medium">{job.company}</span>
+                          <span className="w-0.5 h-0.5 rounded-full bg-white/10" />
+                          <span className="text-[8px] text-[#94a3b8]/40 font-mono italic">
+                            {new Date(job.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className={`text-[9px] px-2 py-0.5 rounded-full border border-current font-bold uppercase tracking-tighter bg-opacity-10
-                          ${job.status === 'applied' ? 'text-[#34d399]' : job.status === 'customizing' ? 'text-yellow-500 animate-pulse' : 'text-[#94a3b8]'}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`text-[8px] px-1.5 py-0.5 rounded border border-current font-black uppercase tracking-widest bg-opacity-5
+                          ${job.status === 'applied' ? 'text-emerald-400 font-bold' : job.status === 'customizing' ? 'text-yellow-400 animate-pulse' : 'text-[#94a3b8]/40'}
                         `}>
                           {job.status}
                         </span>
@@ -1009,10 +1057,27 @@ export default function App() {
               <div className="col-span-2 space-y-8">
                 {/* Credentials Vault */}
                 <div className="glass p-6 rounded-xl border border-white/5 space-y-6">
-                  <div className="flex items-center gap-2 text-[#818cf8]">
-                    <Zap size={16} />
-                    <h3 className="text-xs font-bold uppercase tracking-widest">Active Session Vault</h3>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-[#818cf8]">
+                      <Zap size={16} />
+                      <h3 className="text-xs font-bold uppercase tracking-widest">Active Session Vault</h3>
+                    </div>
+                    <span className="text-[9px] text-yellow-500 bg-yellow-500/10 px-2 py-0.5 rounded border border-yellow-500/20 font-bold uppercase animate-pulse">Session Active</span>
                   </div>
+                  
+                  <div className="p-4 bg-[#818cf8]/5 border border-[#818cf8]/10 rounded-xl space-y-2">
+                    <p className="text-[10px] text-[#94a3b8] font-bold uppercase tracking-widest flex items-center gap-2">
+                      <FileText size={12} /> Vault Entry Guide
+                    </p>
+                    <p className="text-[10px] text-[#f8fafc]/70 leading-relaxed">
+                      To synchronize your local session: <br />
+                      1. Open <b>LinkedIn/Naukri</b> in another tab and login.<br />
+                      2. Press <b>F12</b> (Inspect) &rarr; <b>Application</b> &rarr; <b>Cookies</b>.<br />
+                      3. Copy the value of <b>'li_at'</b> for LinkedIn or <b>'token'</b> for Naukri.<br />
+                      4. Paste into the vault below. This allows the Sentinel to "impersonate" your browser session for direct interactions.
+                    </p>
+                  </div>
+
                   <div className="grid grid-cols-3 gap-6">
                     <div className="space-y-2">
                       <label className="text-[10px] text-[#94a3b8] uppercase tracking-wider font-bold">LinkedIn Cookie (li_at)</label>
@@ -1074,6 +1139,9 @@ export default function App() {
                           <Zap size={10} /> Test Link
                         </button>
                       </div>
+                      <p className="text-[9px] text-yellow-500/80 leading-tight">
+                        Note: AWS SNS requires you to hit <b>'Confirm Subscription'</b> in your email/SMS inbox after linking the ARN.
+                      </p>
                       <input 
                         type="text"
                         placeholder="arn:aws:sns:..."
@@ -1102,6 +1170,33 @@ export default function App() {
                         className="w-full bg-black/40 border border-white/10 rounded-lg p-3 text-xs font-mono focus:border-[#818cf8] outline-none"
                       />
                     </div>
+                  </div>
+                </div>
+
+                {/* Targeted Search Matrices */}
+                <div className="glass p-6 rounded-xl border border-white/5 space-y-6">
+                  <div className="flex items-center gap-2 text-[#818cf8]">
+                    <Search size={16} />
+                    <h3 className="text-xs font-bold uppercase tracking-widest">Targeted Search Matrices</h3>
+                  </div>
+                  
+                  <p className="text-[11px] text-[#94a3b8] leading-tight">
+                    Provide direct job search URLs from your browser to guide the Sentinel. The AI will prioritize these specific search results.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-6">
+                    {PLATFORMS.filter(p => !['Career Portals'].includes(p)).map(platform => (
+                      <div key={platform} className="space-y-2">
+                        <label className="text-[10px] text-[#94a3b8] uppercase tracking-wider font-bold">{platform} Search Feed URL</label>
+                        <input 
+                          type="text"
+                          placeholder={`Paste ${platform} job search URL...`}
+                          value={status.platformUrls?.[platform.toLowerCase()] || ''}
+                          onChange={(e) => updatePlatformUrl(platform.toLowerCase(), e.target.value)}
+                          className="w-full bg-black/40 border border-white/10 rounded-lg p-3 text-xs font-mono focus:border-[#818cf8] outline-none"
+                        />
+                      </div>
+                    ))}
                   </div>
                 </div>
 

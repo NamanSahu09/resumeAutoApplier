@@ -47,7 +47,8 @@ export const PLATFORMS = [
   'Indeed',
   'Glassdoor',
   'Unstop',
-  'Hirist'
+  'Hirist',
+  'Apna'
 ];
 
 export const DEFAULT_FILTER = {
