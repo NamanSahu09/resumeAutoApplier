@@ -1,0 +1,62 @@
+{
+  "entities": {
+    "Job": {
+      "title": "Job Posting",
+      "description": "Information about a job opportunity discovered by the sentinel.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "company": { "type": "string" },
+        "platform": { "type": "string" },
+        "url": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "customizing", "applied", "failed"] },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["title", "company", "platform", "url", "status", "timestamp", "userId"]
+    },
+    "AutomationStatus": {
+      "title": "Automation Status",
+      "description": "Current state and logs of the job automation sentinel.",
+      "type": "object",
+      "properties": {
+        "isRunning": { "type": "boolean" },
+        "lastRun": { "type": "string" },
+        "nextRun": { "type": "string" },
+        "logs": { 
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "userId": { "type": "string" }
+      },
+      "required": ["isRunning", "userId"]
+    },
+    "Resume": {
+      "title": "Resume Data",
+      "description": "The user's master resume or a tailored version for a specific job.",
+      "type": "object",
+      "properties": {
+        "content": { "type": "string" },
+        "type": { "type": "string", "enum": ["master", "tailored"] },
+        "jobId": { "type": "string" },
+        "userId": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["content", "type", "userId", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/jobs/{jobId}": {
+      "schema": "Job",
+      "description": "Collection of all discovered job opportunities."
+    },
+    "/status/{userId}": {
+      "schema": "AutomationStatus",
+      "description": "The automation control document for each user."
+    },
+    "/resumes/{resumeId}": {
+      "schema": "Resume",
+      "description": "The master and tailored resumes for each user."
+    }
+  }
+}

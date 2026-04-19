@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function isEmailVerified() { return isSignedIn() && request.auth.token.email_verified == true; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+
+    // --- Job Validation ---
+    function isValidJob(data) {
+      return data.keys().hasAll(['title', 'company', 'platform', 'url', 'status', 'timestamp', 'userId']) 
+        && data.keys().size() <= 11
+        && data.title is string && data.title.size() <= 500
+        && data.company is string && data.company.size() <= 500
+        && data.platform is string && data.platform.size() <= 100
+        && data.url is string && data.url.size() <= 2000
+        && data.status in ['pending', 'customizing', 'applied', 'failed']
+        && data.timestamp is string
+        && isOwner(data.userId)
+        && (!('coverLetter' in data) || (data.coverLetter is string && data.coverLetter.size() <= 10000));
+    }
+
+    // --- Status Validation ---
+    function isValidStatus(data) {
+      return data.keys().hasAll(['isRunning', 'userId'])
+        && data.isRunning is bool
+        && isOwner(data.userId)
+        && (!('logs' in data) || (data.logs is list && data.logs.size() <= 500))
+        && (!('credentials' in data) || data.credentials is map)
+        && (!('filter' in data) || data.filter is map);
+    }
+
+    // --- Resume Validation ---
+    function isValidResume(data) {
+      return data.keys().hasAll(['content', 'type', 'userId', 'updatedAt'])
+        && data.keys().size() <= 10
+        && data.content is string && data.content.size() <= 100000
+        && data.type in ['master', 'tailored']
+        && isOwner(data.userId)
+        && data.updatedAt is timestamp
+        && (!('jobId' in data) || data.jobId is string)
+        && (!('version' in data) || data.version is int);
+    }
+
+    // --- Collections ---
+
+    match /jobs/{jobId} {
+      allow get: if isSignedIn() && isOwner(existing().userId);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(jobId) && isValidJob(incoming());
+      allow update: if isSignedIn() && isOwner(existing().userId) && isValidJob(incoming())
+        && (incoming().diff(existing()).affectedKeys().hasAny(['status', 'timestamp', 'coverLetter']));
+      allow delete: if isSignedIn() && isOwner(existing().userId);
+    }
+
+    match /status/{userId} {
+      allow get, delete: if isOwner(userId);
+      allow list: if isOwner(userId);
+      allow create, update: if isOwner(userId) && isValidStatus(incoming());
+    }
+
+    match /resumes/{resumeId} {
+      allow get, delete: if isOwner(existing().userId);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(resumeId) && isValidResume(incoming());
+      allow update: if isOwner(existing().userId) && isValidResume(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['content', 'updatedAt']);
+    }
+  }
+}

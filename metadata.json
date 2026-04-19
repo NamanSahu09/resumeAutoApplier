@@ -1,0 +1,6 @@
+{
+  "name": "AutoApply AI",
+  "description": "Zero-touch automated job application sentinel that tailors resumes using Gemini and manages automated application workflows for developer roles.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
