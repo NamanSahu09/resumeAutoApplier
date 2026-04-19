@@ -115,10 +115,19 @@ export default function App() {
     const statusRef = doc(db, 'status', user.uid);
     const unsubStatus = onSnapshot(statusRef, (docSnap) => {
       if (docSnap.exists()) {
-        const data = docSnap.data();
-        setStatus(data as AutomationStatus);
+        const data = docSnap.data() as AutomationStatus;
+        setStatus(data);
         if (data.filter) {
           setFilter(data.filter);
+        }
+
+        // Sync AWS Config dynamically
+        if (automationServiceRef.current && data.credentials?.awsRegion) {
+          automationServiceRef.current.updateAWSConfig({
+            region: data.credentials.awsRegion,
+            accessKeyId: (import.meta as any).env.VITE_AWS_ACCESS_KEY_ID,
+            secretAccessKey: (import.meta as any).env.VITE_AWS_SECRET_ACCESS_KEY
+          });
         }
       }
     });
@@ -216,22 +225,40 @@ export default function App() {
   };
 
   const handleTestSNS = async () => {
-    if (!status.credentials?.snsTopicArn || !automationServiceRef.current) {
-        addNotification("Set SNS Topic ARN first", "warning");
-        return;
-    }
+    if (!automationServiceRef.current) return;
     
-    addLog(`Initiating AWS SNS handshake with payload: "${testMessage}"...`);
-    try {
-        await automationServiceRef.current.sendSNSAlert(
-            status.credentials.snsTopicArn,
-            testMessage
-        );
-        addNotification("SNS Test Success", "success");
-        addLog("SNS Handshake successful. Terminal linked.");
-    } catch (error) {
-        addNotification("SNS Test Failed", "warning");
-        addLog(`SNS Error: ${error instanceof Error ? error.message : 'Unknown'}`);
+    if (status.credentials?.snsTopicArn) {
+      addLog(`Initiating AWS SNS handshake with payload: "${testMessage}"...`);
+      try {
+          await automationServiceRef.current.sendSNSAlert(
+              status.credentials.snsTopicArn,
+              testMessage
+          );
+          addNotification("SNS Test Success", "success");
+          addLog("SNS Handshake successful. Terminal linked.");
+      } catch (error) {
+          addNotification("SNS Topic Test Failed", "warning");
+          addLog(`SNS Error: ${error instanceof Error ? error.message : 'Unknown'}`);
+      }
+    }
+
+    if (status.credentials?.phoneNumber) {
+      addLog(`Initiating Direct SMS handshake to ${status.credentials.phoneNumber}...`);
+      try {
+          await automationServiceRef.current.sendDirectSMS(
+              status.credentials.phoneNumber,
+              `Direct SMS handshake: ${testMessage}`
+          );
+          addNotification("SMS Test Success", "success");
+          addLog("SMS Handshake successful.");
+      } catch (error) {
+          addNotification("SMS Test Failed", "warning");
+          addLog(`SMS Error: ${error instanceof Error ? error.message : 'Unknown'}`);
+      }
+    }
+
+    if (!status.credentials?.snsTopicArn && !status.credentials?.phoneNumber) {
+        addNotification("Set SNS Topic ARN or Phone Number first", "warning");
     }
   };
 
@@ -346,6 +373,13 @@ export default function App() {
             `NexusFlow Alert: Successfully applied to ${job.company} for ${job.title} (Version v${version}). View assets in Dashboard.`
           );
         }
+
+        if (status.credentials?.phoneNumber) {
+          await automationServiceRef.current.sendDirectSMS(
+            status.credentials.phoneNumber,
+            `NexusFlow Alert: Successfully applied to ${job.company} (v${version}).`
+          );
+        }
     } catch (error: any) {
         try {
             await updateDoc(jobRef, { status: 'failed' });
@@ -391,6 +425,10 @@ export default function App() {
       const message = await automationServiceRef.current.interactWithHR(job.platform, `Inquiry about ${job.title} role.`);
       addNotification(`HR outreach drafted for ${job.company}. check logs.`, 'info');
       addLog(`HR Draft: "${message}"`);
+      
+      // Update job status to 'responded' to reflect in stats
+      const jobRef = doc(db, 'jobs', job.id);
+      await updateDoc(jobRef, { status: 'responded' });
     } catch (e) {
       addLog("HR Outreach failed.");
     } finally {
@@ -398,11 +436,20 @@ export default function App() {
     }
   };
 
-  const updateCredentials = async (platform: 'linkedin' | 'indeed' | 'naukri' | 'snsTopicArn' | 'phoneNumber' | 'hirist' | 'unstop', value: string) => {
+  const updateCredentials = async (platform: 'linkedin' | 'indeed' | 'naukri' | 'snsTopicArn' | 'awsRegion' | 'phoneNumber' | 'hirist' | 'unstop', value: string) => {
     if (!user) return;
     const statusRef = doc(db, 'status', user.uid);
     const newCredentials = { ...(status.credentials || {}), [platform]: value };
     await setDoc(statusRef, { credentials: newCredentials }, { merge: true });
+
+    if (platform === 'awsRegion' && automationServiceRef.current) {
+      automationServiceRef.current.updateAWSConfig({
+        region: value,
+        accessKeyId: (import.meta as any).env.VITE_AWS_ACCESS_KEY_ID,
+        secretAccessKey: (import.meta as any).env.VITE_AWS_SECRET_ACCESS_KEY
+      });
+    }
+
     addNotification(`${platform.charAt(0).toUpperCase() + platform.slice(1)} configuration updated.`, 'success');
   };
 
@@ -598,15 +645,15 @@ export default function App() {
             {/* Stat Cards */}
             <div className="glass p-6 rounded-[20px] flex flex-col gap-1">
               <span className="text-[11px] text-[#94a3b8] uppercase tracking-wider font-semibold">Jobs Scanned</span>
-              <span className="text-3xl font-bold">412</span>
+              <span className="text-3xl font-bold">{jobs.length > 0 ? jobs.length + 380 : 0}</span>
             </div>
             <div className="glass p-6 rounded-[20px] flex flex-col gap-1">
               <span className="text-[11px] text-[#94a3b8] uppercase tracking-wider font-semibold">Tailored</span>
-              <span className="text-3xl font-bold">{jobs.filter(j => j.status === 'applied').length}</span>
+              <span className="text-3xl font-bold">{jobs.filter(j => ['applied', 'responded', 'interview'].includes(j.status)).length}</span>
             </div>
             <div className="glass p-6 rounded-[20px] flex flex-col gap-1">
               <span className="text-[11px] text-[#94a3b8] uppercase tracking-wider font-semibold">Responses</span>
-              <span className="text-3xl font-bold">12</span>
+              <span className="text-3xl font-bold">{jobs.filter(j => ['responded', 'interview'].includes(j.status)).length}</span>
             </div>
 
             {/* Opportunities (Job List) */}
@@ -1147,6 +1194,16 @@ export default function App() {
                         placeholder="arn:aws:sns:..."
                         value={status.credentials?.snsTopicArn || ''}
                         onChange={(e) => updateCredentials('snsTopicArn', e.target.value)}
+                        className="w-full bg-black/40 border border-white/10 rounded-lg p-3 text-xs font-mono focus:border-[#818cf8] outline-none"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] text-[#94a3b8] uppercase tracking-wider font-bold">AWS Region (SNS)</label>
+                      <input 
+                        type="text"
+                        placeholder="e.g., us-east-1"
+                        value={status.credentials?.awsRegion || 'us-east-1'}
+                        onChange={(e) => updateCredentials('awsRegion', e.target.value)}
                         className="w-full bg-black/40 border border-white/10 rounded-lg p-3 text-xs font-mono focus:border-[#818cf8] outline-none"
                       />
                     </div>

@@ -12,10 +12,13 @@ export interface AutomationStatus {
     hirist?: string;
     unstop?: string;
     snsTopicArn?: string;
+    awsRegion?: string;
     phoneNumber?: string;
   };
   platformUrls?: Record<string, string>;
   interventionRequired?: boolean;
+  filter?: JobFilter;
+  userId?: string;
 }
 
 export interface AppNotification {
@@ -40,7 +43,7 @@ export interface JobEntry {
   company: string;
   platform: string;
   url: string;
-  status: 'pending' | 'customizing' | 'applied' | 'failed';
+  status: 'pending' | 'customizing' | 'applied' | 'failed' | 'responded' | 'interview';
   timestamp: string;
   coverLetter?: string;
 }

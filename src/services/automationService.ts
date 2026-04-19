@@ -21,8 +21,45 @@ export class AutomationService {
     }
   }
 
-  async sendSNSAlert(topicArn: string, message: string) {
+  async updateAWSConfig(awsConfig: { region?: string; accessKeyId?: string; secretAccessKey?: string }) {
+    if (awsConfig.accessKeyId && awsConfig.secretAccessKey) {
+      this.snsClient = new SNSClient({
+        region: awsConfig.region || "us-east-1",
+        credentials: {
+          accessKeyId: awsConfig.accessKeyId,
+          secretAccessKey: awsConfig.secretAccessKey
+        }
+      });
+    }
+  }
+
+  async sendDirectSMS(phoneNumber: string, message: string) {
     if (!this.snsClient) return;
+    try {
+      await this.withRetry(async () => {
+        const command = new PublishCommand({
+          PhoneNumber: phoneNumber,
+          Message: message,
+        });
+        await this.snsClient?.send(command);
+      });
+    } catch (error) {
+      console.error("Direct SMS failed after retries:", error);
+      throw error;
+    }
+  }
+
+  async sendSNSAlert(topicArn: string, message: string) {
+    if (!this.snsClient) {
+      console.warn("SNS Client not initialized. Check AWS credentials.");
+      return;
+    }
+
+    // Guard against common user error: Provide IAM ARN instead of SNS Topic ARN
+    if (topicArn.includes(":iam::")) {
+      throw new Error(`The provided ARN is an IAM User ARN (${topicArn}). You MUST provide an Amazon SNS Topic ARN (starts with 'arn:aws:sns:').`);
+    }
+
     try {
       await this.withRetry(async () => {
         const command = new PublishCommand({
